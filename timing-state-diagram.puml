@@ -1,0 +1,279 @@
+@startuml Don Pastel System - Timing and State Diagrams
+
+title Don Pastel System - Combined Timing and State Diagrams
+
+'================================
+' STATE MACHINE DIAGRAM
+'================================
+
+state "Order State Machine" as OrderStateMachine {
+
+  state Pendiente {
+    Pendiente : entry / Set status='pendiente'
+    Pendiente : entry / Total amount calculated
+    Pendiente : entry / Inventory decremented
+  }
+
+  state En_Preparacion {
+    En_Preparacion : entry / Set status='en_preparacion'
+    En_Preparacion : do / Kitchen preparing order
+  }
+
+  state Listo {
+    Listo : entry / Set status='listo'
+    Listo : entry / Notify customer
+    Listo : do / Waiting for pickup/delivery
+  }
+
+  state Entregado {
+    Entregado : entry / Set status='entregado'
+    Entregado : entry / Order completed
+  }
+
+  [*] --> Pendiente : Order Created\n(POST /api/orders)
+  Pendiente --> En_Preparacion : PATCH /api/orders/:id/status\n{status: "en_preparacion"}\n[cajero OR gerente]
+  En_Preparacion --> Listo : PATCH /api/orders/:id/status\n{status: "listo"}\n[cajero OR gerente]
+  Listo --> Entregado : PATCH /api/orders/:id/status\n{status: "entregado"}\n[cajero OR gerente]
+  Entregado --> [*]
+
+  note right of Pendiente
+    Initial state when order
+    is first created.
+    Customer has not paid yet
+    (payment optional at this stage).
+  end note
+
+  note right of En_Preparacion
+    Kitchen staff preparing
+    the pastry products.
+    Customer may pay during
+    this phase.
+  end note
+
+  note right of Listo
+    Order ready for customer.
+    Customer must pay before
+    or during pickup.
+  end note
+
+  note right of Entregado
+    Final state.
+    No further transitions allowed.
+    Payment must be recorded.
+  end note
+}
+
+'================================
+' PAYMENT STATE MACHINE
+'================================
+
+state "Payment State Machine" as PaymentStateMachine {
+
+  state No_Payment {
+    No_Payment : Order exists without payment
+    No_Payment : Allows multiple attempts
+  }
+
+  state Payment_Initiated {
+    Payment_Initiated : entry / BEGIN TRANSACTION
+    Payment_Initiated : do / Lock order row (FOR UPDATE)
+    Payment_Initiated : do / Validate no duplicate payment
+  }
+
+  state Payment_Failed {
+    Payment_Failed : entry / ROLLBACK TRANSACTION
+    Payment_Failed : exit / Return 409/404/403 error
+  }
+
+  state Payment_Completed {
+    Payment_Completed : entry / Payment record created
+    Payment_Completed : Immutable state
+  }
+
+  [*] --> No_Payment : Order Created
+  No_Payment --> Payment_Initiated : POST /api/payments\n{order_id, payment_method}
+  Payment_Initiated --> Payment_Failed : Duplicate payment detected\nOR order not found\nOR unauthorized access
+  Payment_Initiated --> Payment_Completed : INSERT INTO payments\nCOMMIT TRANSACTION
+  Payment_Failed --> No_Payment : Retry allowed
+  Payment_Completed --> [*]
+
+  note right of No_Payment
+    Order can exist without payment.
+    Multiple payment attempts allowed
+    until successful.
+  end note
+
+  note right of Payment_Completed
+    One payment per order (UNIQUE constraint).
+    No further payments allowed.
+    Attempting duplicate returns 409 Conflict.
+  end note
+}
+
+'================================
+' JWT TOKEN LIFECYCLE
+'================================
+
+state "JWT Token Lifecycle" as TokenLifecycle {
+
+  state Not_Authenticated
+
+  state Authenticating {
+    Authenticating : entry / Query user from database
+    Authenticating : do / bcrypt.compare(password, hash)
+  }
+
+  state Authentication_Failed {
+    Authentication_Failed : exit / Return 401 Unauthorized
+  }
+
+  state Token_Issued {
+    Token_Issued : entry / Sign JWT with {id, role, exp}
+    Token_Issued : Token expires in 2 hours (default)
+    Token_Issued : exit / Return {token, user}
+  }
+
+  state Authenticated {
+    Authenticated : Client includes Authorization header
+    Authenticated : Bearer token scheme
+  }
+
+  state Token_Expired {
+    Token_Expired : entry / JWT signature invalid (exp claim)
+    Token_Expired : exit / Return 401 Unauthorized
+  }
+
+  [*] --> Not_Authenticated : User starts session
+  Not_Authenticated --> Authenticating : POST /api/auth/login\n{username, password}
+  Authenticating --> Authentication_Failed : Invalid credentials
+  Authenticating --> Token_Issued : Credentials valid
+  Authentication_Failed --> Not_Authenticated : Retry allowed
+  Token_Issued --> Authenticated : Client stores token
+  Authenticated --> Token_Expired : After JWT_EXPIRES (2h)
+  Authenticated --> Not_Authenticated : User logs out
+  Token_Expired --> Not_Authenticated : Must re-authenticate
+
+  note right of Authenticated
+    Each request validates:
+    1. Token signature (JWT_SECRET)
+    2. Token expiration (exp claim)
+    3. Token format (Bearer scheme)
+
+    Middleware attaches req.user = {id, role}
+  end note
+}
+
+'================================
+' INVENTORY STATE
+'================================
+
+state "Inventory State Management" as InventoryState {
+
+  state Normal_Stock {
+    Normal_Stock : stock_level >= threshold
+    Normal_Stock : Available for orders
+  }
+
+  state Low_Stock {
+    Low_Stock : stock_level > 0 AND < threshold
+    Low_Stock : entry / Appears in GET /api/inventory/low
+    Low_Stock : Needs restocking alert
+  }
+
+  state Out_Of_Stock {
+    Out_Of_Stock : stock_level = 0
+    Out_Of_Stock : Cannot create orders
+    Out_Of_Stock : exit / Order creation fails with 400
+  }
+
+  [*] --> Normal_Stock : Product created\nInitial stock set
+  Normal_Stock --> Low_Stock : stock_level < LOW_STOCK_THRESHOLD\n(default: 10)
+  Normal_Stock --> Out_Of_Stock : stock_level = 0
+  Low_Stock --> Normal_Stock : PATCH /api/inventory/:id\n{stock_level: higher}
+  Low_Stock --> Out_Of_Stock : Last items sold
+  Out_Of_Stock --> Low_Stock : PATCH /api/inventory/:id\n{stock_level: 1-9}
+  Out_Of_Stock --> Normal_Stock : PATCH /api/inventory/:id\n{stock_level: >= 10}
+  Normal_Stock --> Normal_Stock : Order created\n(decrements stock_level)
+  Low_Stock --> Low_Stock : Order created\n(decrements stock_level)
+
+  note right of Normal_Stock
+    Inventory updated atomically
+    with order creation in
+    same transaction.
+
+    Updates timestamp:
+    last_updated = CURRENT_TIMESTAMP
+  end note
+
+  note right of Low_Stock
+    Gerente can query low stock items:
+    GET /api/inventory/low?threshold=15
+
+    Returns products for restocking.
+  end note
+}
+
+'================================
+' USER REGISTRATION STATE
+'================================
+
+state "User Registration State" as UserRegistration {
+
+  state Unregistered
+
+  state Registration_Initiated {
+    Registration_Initiated : entry / Validate inputs
+    Registration_Initiated : do / Check username uniqueness
+    Registration_Initiated : do / Validate role enum
+  }
+
+  state Registration_Failed {
+    Registration_Failed : exit / Return 400/409/403 error
+  }
+
+  state Password_Hashing {
+    Password_Hashing : entry / bcrypt.hash(password, 10)
+  }
+
+  state User_Created {
+    User_Created : entry / Return user_id
+    User_Created : User can now login
+  }
+
+  [*] --> Unregistered
+  Unregistered --> Registration_Initiated : POST /api/auth/register\n{username, password, role}\n[gerente only]
+  Registration_Initiated --> Registration_Failed : Username taken\nOR invalid role\nOR unauthorized
+  Registration_Initiated --> Password_Hashing : Validation passed
+  Registration_Failed --> Unregistered
+  Password_Hashing --> User_Created : INSERT INTO users\n(username, password_hash, role)
+  User_Created --> [*]
+
+  note right of Registration_Initiated
+    Only gerente role can create users.
+    Validates role in:
+    ['gerente', 'cajero', 'cliente']
+  end note
+}
+
+note bottom
+  **State Transition Rules:**
+
+  1. Order Status: pendiente → en_preparacion → listo → entregado
+     (Sequential, no backward transitions)
+
+  2. Payment: No_Payment → Payment_Completed (One-way, immutable)
+
+  3. JWT Token: Stateless, expires after 2h, must re-authenticate
+
+  4. Inventory: Dynamic based on stock_level threshold checks
+
+  5. User Registration: One-time creation, gerente authorization required
+
+  **Timing Characteristics:**
+  - JWT Token: 2 hour expiration (JWT_EXPIRES)
+  - Transaction Timeout: Database connection pool default
+  - Low Stock Threshold: 10 units (LOW_STOCK_THRESHOLD)
+  - Order lifecycle: Minutes to hours (depends on preparation)
+end note
+
+@enduml

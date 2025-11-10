@@ -1,0 +1,28 @@
+{
+    "name": "don_pastel",
+    "version": "1.0.0",
+    "description": "Don Pastel backend API",
+    "main": "src/server.js",
+    "type": "module",
+    "scripts": {
+        "dev": "nodemon src/server.js",
+        "start": "node src/server.js",
+        "db:schema": "psql -h $env:DB_HOST -U $env:DB_USER -d $env:DB_NAME -f db/schema.sql",
+        "db:seed": "psql -h $env:DB_HOST -U $env:DB_USER -d $env:DB_NAME -f db/seed.sql",
+        "db:setup": "pnpm run db:schema && pnpm run db:seed"
+    },
+    "license": "ISC",
+    "packageManager": "pnpm@10.12.1",
+    "dependencies": {
+        "express": "^5.1.0",
+        "pg": "^8.12.0",
+        "dotenv": "^16.4.5",
+        "bcryptjs": "^2.4.3",
+        "jsonwebtoken": "^9.0.2",
+        "date-fns": "^3.6.0",
+        "cors": "^2.8.5"
+    },
+    "devDependencies": {
+        "nodemon": "^3.1.4"
+    }
+}

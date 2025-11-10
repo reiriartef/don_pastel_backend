@@ -1,0 +1,183 @@
+@startuml Don_Pastel_Deployment_Diagram
+!theme plain
+title Sistema Don Pastel - Diagrama de Despliegue
+
+skinparam node {
+  BackgroundColor LightBlue
+  BorderColor Black
+}
+
+skinparam component {
+  BackgroundColor LightYellow
+  BorderColor Black
+}
+
+skinparam database {
+  BackgroundColor LightGreen
+  BorderColor Black
+}
+
+skinparam artifact {
+  BackgroundColor LightCoral
+  BorderColor Black
+}
+
+node "Cliente Web Browser" as ClientBrowser {
+  [Aplicación Web\nReact/Angular/Vue] as WebApp
+  note right of WebApp
+    Interfaz de usuario
+    para clientes,
+    cajeros y gerentes
+  end note
+}
+
+node "Cliente Móvil" as MobileClient {
+  [Aplicación Móvil\niOS/Android] as MobileApp
+  note right of MobileApp
+    Aplicación nativa
+    o híbrida
+  end note
+}
+
+node "Servidor de Aplicación\n(Node.js Runtime)" as AppServer {
+  component "Express.js Server" as Express {
+    artifact "app.js\nserver.js" as MainApp
+    artifact "Middleware Stack" as Middleware {
+      [CORS Middleware]
+      [JSON Body Parser]
+      [Auth Middleware\n(JWT Validation)]
+      [Role Middleware\n(RBAC)]
+      [Error Handlers]
+    }
+
+    component "API Routes Layer" as Routes {
+      [Auth Routes\n/api/auth/*]
+      [Product Routes\n/api/products/*]
+      [Inventory Routes\n/api/inventory/*]
+      [Order Routes\n/api/orders/*]
+      [Payment Routes\n/api/payments/*]
+      [Report Routes\n/api/reports/*]
+    }
+
+    component "Controllers Layer" as Controllers {
+      [authController]
+      [productController]
+      [inventoryController]
+      [orderController]
+      [paymentController]
+      [reportController]
+    }
+
+    component "Database Layer" as DBLayer {
+      [Connection Pool\n(pg)]
+      [Query Interface]
+      [Transaction Manager]
+    }
+  }
+
+  artifact ".env\nConfiguration" as EnvConfig
+  note right of EnvConfig
+    PORT=3000
+    DB_HOST
+    DB_PORT
+    JWT_SECRET
+    JWT_EXPIRES
+    LOW_STOCK_THRESHOLD
+  end note
+}
+
+node "Servidor de Base de Datos\nPostgreSQL 12+" as DBServer {
+  database "don_pastel\nDatabase" as PostgresDB {
+    frame "Esquema de Datos" {
+      [users table]
+      [products table]
+      [inventory table]
+      [orders table]
+      [order_items table]
+      [payments table]
+    }
+  }
+
+  artifact "Schema & Seed\nSQL Scripts" as SQLScripts
+}
+
+node "Servidor de Autenticación\n(Integrado)" as AuthServer {
+  component "JWT Service" as JWTService {
+    [Token Generator\njsonwebtoken]
+    [Token Validator]
+    [Password Hasher\nbcryptjs]
+  }
+}
+
+node "Sistema de Gestión\n(opcional futuro)" as ManagementTools {
+  [Logs Aggregator]
+  [Monitoring Dashboard]
+  [Metrics Collector]
+  note right
+    Herramientas de
+    DevOps pendientes:
+    - PM2
+    - Nginx
+    - Docker
+  end note
+}
+
+' Conexiones Cliente -> Servidor
+ClientBrowser --> Express : HTTPS/HTTP\nREST API Calls\n(JSON)
+MobileClient --> Express : HTTPS/HTTP\nREST API Calls\n(JSON)
+
+' Conexiones internas del servidor
+MainApp --> Middleware : Request Pipeline
+Middleware --> Routes : Authenticated Requests
+Routes --> Controllers : Route Handlers
+Controllers --> DBLayer : SQL Queries\n(Parameterized)
+Controllers --> JWTService : Auth Operations
+
+' Conexión a Base de Datos
+DBLayer --> PostgresDB : TCP/IP\nPort 5432\nPersistent\nConnection Pool
+
+' Configuración
+EnvConfig ..> MainApp : Environment\nVariables
+SQLScripts ..> PostgresDB : Database\nInitialization
+
+' Monitoreo (futuro)
+Express ..> ManagementTools : Logs & Metrics\n(Future)
+
+' Notas adicionales
+note top of AppServer
+  **Tecnologías:**
+  - Node.js Runtime
+  - Express.js 5.1.0
+  - ES Modules
+  - Puerto por defecto: 3000
+end note
+
+note top of DBServer
+  **Características:**
+  - PostgreSQL 12+
+  - ACID Transactions
+  - Row-level Locking
+  - Foreign Keys
+  - Check Constraints
+end note
+
+note bottom of ClientBrowser
+  **Comunicación:**
+  - JSON REST API
+  - Bearer Token Auth
+  - CORS Enabled
+end note
+
+legend right
+  |<#LightBlue> Node (Servidor/Cliente) |
+  |<#LightYellow> Component (Módulo) |
+  |<#LightGreen> Database |
+  |<#LightCoral> Artifact (Archivo/Config) |
+
+  **Protocolos:**
+  ──── HTTP/HTTPS
+  ──── TCP/IP
+  ···· Configuration
+endlegend
+
+@enduml

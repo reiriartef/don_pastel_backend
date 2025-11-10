@@ -1,0 +1,281 @@
+@startuml Sistema Don Pastel - Diagrama de Objetos
+
+title Sistema Don Pastel - Diagrama de Objetos\nEjemplo de Instancias del Sistema en Tiempo de Ejecución
+
+'================================
+' ESCENARIO: Orden completada con pago
+'================================
+
+package "Usuarios del Sistema" {
+  object ":Usuario (Gerente)" as gerente {
+    user_id = 1
+    username = "gerente1"
+    password_hash = "$2a$10$..."
+    role = "gerente"
+  }
+
+  object ":Usuario (Cajero)" as cajero {
+    user_id = 2
+    username = "cajero1"
+    password_hash = "$2a$10$..."
+    role = "cajero"
+  }
+
+  object ":Usuario (Cliente)" as cliente {
+    user_id = 3
+    username = "maria_lopez"
+    password_hash = "$2a$10$..."
+    role = "cliente"
+  }
+}
+
+package "Catalogo de Productos" {
+  object ":Producto" as prod1 {
+    product_id = 1
+    name = "Pastel Chocolate"
+    description = "Pastel de chocolate con..."
+    price = 15.00
+  }
+
+  object ":Producto" as prod2 {
+    product_id = 2
+    name = "Pastel Vainilla"
+    description = "Pastel de vainilla con..."
+    price = 12.00
+  }
+
+  object ":Producto" as prod3 {
+    product_id = 3
+    name = "Tarta Fresa"
+    description = "Tarta de fresa fresca..."
+    price = 18.50
+  }
+}
+
+package "Gestion de Inventario" {
+  object ":Inventario" as inv1 {
+    inventory_id = 1
+    product_id = 1
+    stock_level = 45
+    last_updated = "2025-10-16 09:30:00"
+  }
+
+  object ":Inventario" as inv2 {
+    inventory_id = 2
+    product_id = 2
+    stock_level = 8
+    last_updated = "2025-10-16 10:15:00"
+    alerta = "Stock Bajo"
+  }
+
+  object ":Inventario" as inv3 {
+    inventory_id = 3
+    product_id = 3
+    stock_level = 32
+    last_updated = "2025-10-16 08:45:00"
+  }
+}
+
+package "Ordenes y Items" {
+  object ":Orden" as orden1 {
+    order_id = 101
+    user_id = 3
+    order_date = "2025-10-16 10:30:00"
+    status = "entregado"
+    total_amount = 45.50
+  }
+
+  object ":Item de Orden" as item1 {
+    order_item_id = 201
+    order_id = 101
+    product_id = 1
+    quantity = 2
+    unit_price = 15.00
+  }
+
+  object ":Item de Orden" as item2 {
+    order_item_id = 202
+    order_id = 101
+    product_id = 2
+    quantity = 1
+    unit_price = 12.00
+  }
+
+  object ":Orden" as orden2 {
+    order_id = 102
+    user_id = 3
+    order_date = "2025-10-16 11:00:00"
+    status = "en_preparacion"
+    total_amount = 18.50
+  }
+
+  object ":Item de Orden" as item3 {
+    order_item_id = 203
+    order_id = 102
+    product_id = 3
+    quantity = 1
+    unit_price = 18.50
+  }
+}
+
+package "Pagos Registrados" {
+  object ":Pago" as pago1 {
+    payment_id = 301
+    order_id = 101
+    payment_method = "efectivo"
+    amount = 45.50
+    payment_date = "2025-10-16 10:35:00"
+  }
+}
+
+package "Sesiones de Autenticacion" {
+  object ":Token JWT" as token1 {
+    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+    user_id = 3
+    role = "cliente"
+    exp = 1729097400
+    issued_at = "2025-10-16 10:30:00"
+    expires_at = "2025-10-16 12:30:00"
+  }
+
+  object ":Token JWT" as token2 {
+    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+    user_id = 2
+    role = "cajero"
+    exp = 1729100000
+    issued_at = "2025-10-16 11:00:00"
+    expires_at = "2025-10-16 13:00:00"
+  }
+}
+
+' ===== RELACIONES =====
+
+' Usuario - Orden
+cliente -- orden1 : "realiza"
+cliente -- orden2 : "realiza"
+
+' Orden - Items
+orden1 *-- item1
+orden1 *-- item2
+orden2 *-- item3
+
+' Items - Productos
+item1 ..> prod1 : "referencia"
+item2 ..> prod2 : "referencia"
+item3 ..> prod3 : "referencia"
+
+' Inventario - Productos
+inv1 -- prod1 : "controla stock de"
+inv2 -- prod2 : "controla stock de"
+inv3 -- prod3 : "controla stock de"
+
+' Pago - Orden
+pago1 -- orden1 : "corresponde a"
+
+' Tokens - Usuarios
+token1 ..> cliente : "autentica a"
+token2 ..> cajero : "autentica a"
+
+note top of gerente
+  Usuario con privilegios completos:
+  - Crear/editar productos
+  - Ver reportes de ventas
+  - Gestionar inventario
+  - Crear usuarios
+end note
+
+note top of cajero
+  Usuario con permisos operativos:
+  - Ver inventario
+  - Crear órdenes
+  - Actualizar estado de órdenes
+  - Registrar pagos
+end note
+
+note top of cliente
+  Usuario con acceso limitado:
+  - Ver productos
+  - Crear propias órdenes
+  - Pagar propias órdenes
+  - Ver historial propio
+end note
+
+note bottom of inv2
+  **Alerta de Stock Bajo**
+  Stock actual: 8 unidades
+  Umbral mínimo: 10 unidades
+  Acción requerida: Reabastecer
+end note
+
+note right of orden1
+  **Flujo completado:**
+  1. Orden creada (pendiente)
+  2. Pago registrado
+  3. Preparación iniciada (en_preparacion)
+  4. Orden lista (listo)
+  5. Orden entregada (entregado)
+
+  Total pagado: $45.50
+  Método: Efectivo
+end note
+
+note right of orden2
+  **Flujo en proceso:**
+  1. Orden creada (pendiente) ✓
+  2. Preparación iniciada (en_preparacion) ✓
+  3. Pendiente de completar...
+
+  Estado actual: En preparación
+  Pago: Pendiente
+end note
+
+note bottom of token1
+  Token válido por 2 horas
+  Incluido en cada request:
+  Authorization: Bearer <token>
+
+  Middleware valida:
+  - Firma (JWT_SECRET)
+  - Expiración
+  - Formato
+end note
+
+legend bottom
+  **Escenario representado:**
+
+  • Cliente "maria_lopez" (user_id: 3)
+  • Orden #101: Completada y pagada
+    - 2x Pastel Chocolate ($15.00 c/u)
+    - 1x Pastel Vainilla ($12.00)
+    - Total: $45.50 (pagado en efectivo)
+    - Estado: Entregado
+
+  • Orden #102: En preparación
+    - 1x Tarta Fresa ($18.50)
+    - Estado: En preparación
+    - Pago: Pendiente
+
+  • Inventario:
+    - Pastel Chocolate: 45 unidades (Normal)
+    - Pastel Vainilla: 8 unidades (⚠ Stock Bajo)
+    - Tarta Fresa: 32 unidades (Normal)
+
+  • Sesiones activas:
+    - Cliente autenticado (token válido hasta 12:30)
+    - Cajero autenticado (token válido hasta 13:00)
+
+  **Multiplicidad:**
+  • Un usuario puede tener múltiples órdenes
+  • Una orden contiene múltiples items
+  • Cada item referencia un producto
+  • Cada producto tiene un registro de inventario
+  • Una orden puede tener máximo un pago (UNIQUE constraint)
+
+  **Constraints aplicados:**
+  • stock_level >= 0
+  • price >= 0
+  • total_amount >= 0
+  • Una orden, un pago (payments.order_id UNIQUE)
+end legend
+
+@enduml

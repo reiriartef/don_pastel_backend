@@ -1,0 +1,193 @@
+@startuml Sistema Don Pastel - Diagrama de Vista de Interacción
+
+title Sistema Don Pastel - Diagrama de Vista de Interacción\nFlujo Completo de Procesamiento de Órdenes
+
+start
+
+:Solicitud de Usuario Recibida;
+
+partition "Autenticación y Autorización" {
+  :Validar JWT Token;
+
+  if (¿Token Válido?) then (sí)
+    :Extraer user.id y user.role;
+  else (no)
+    :Retornar 401 Unauthorized;
+    stop
+  endif
+
+  :Verificar Permisos de Rol;
+
+  if (¿Tiene Permiso?) then (sí)
+    :Continuar al Handler;
+  else (no)
+    :Retornar 403 Forbidden;
+    stop
+  endif
+}
+
+partition "Proceso de Creación de Orden" {
+
+  :Analizar Request Body\n{items: [{product_id, quantity}]};
+
+  :BEGIN TRANSACTION;
+
+  fork
+    :Bloquear Filas de Inventario\n(SELECT FOR UPDATE);
+  fork again
+    :Validar que Productos Existen;
+  end fork
+
+  :Verificar Disponibilidad de Stock;
+
+  if (¿Stock Suficiente?) then (sí)
+
+    :Obtener Precios de Productos;
+
+    :Calcular Monto Total;
+
+    partition "Operaciones de Base de Datos" {
+      fork
+        :INSERT INTO orders\n(user_id, status='pendiente',\ntotal_amount);
+        :Obtener order_id;
+      fork again
+        :INSERT INTO order_items\n(por cada producto);
+        :Guardar snapshot de unit_price;
+      fork again
+        :UPDATE inventory\n(decrementar stock_level);
+        :Actualizar timestamp last_updated;
+      end fork
+    }
+
+    :COMMIT TRANSACTION;
+
+    :Obtener Detalles Completos de Orden;
+
+    :Retornar 201 Created\ncon Datos de Orden;
+
+  else (no)
+    :ROLLBACK TRANSACTION;
+    :Retornar 400 Bad Request\n"Stock insuficiente";
+    stop
+  endif
+}
+
+partition "Actualizaciones de Estado de Orden (Ciclo de Vida)" {
+
+  :Estado de Orden: pendiente;
+
+  repeat
+    :Cajero/Gerente Actualiza Estado;
+
+    if (¿Transición Válida?) then (sí)
+      :Actualizar Estado de Orden;
+
+      switch (¿Nuevo Estado?)
+      case (en_preparacion)
+        :Cocina Prepara Orden;
+      case (listo)
+        :Notificar al Cliente\nOrden Lista;
+      case (entregado)
+        :Marcar como Entregado;
+        detach
+      endswitch
+
+    else (no)
+      :Retornar 400 Bad Request\n"Transición inválida";
+      stop
+    endif
+
+  repeat while (¿Estado != entregado?)
+
+}
+
+partition "Procesamiento de Pagos" {
+
+  :Cliente Inicia Pago;
+
+  :BEGIN TRANSACTION;
+
+  :Bloquear Fila de Orden\n(SELECT FOR UPDATE);
+
+  if (¿Orden Existe?) then (sí)
+
+    if (¿Rol Cliente?) then (sí)
+      if (¿Orden pertenece al usuario?) then (sí)
+        :Continuar;
+      else (no)
+        :ROLLBACK;
+        :Retornar 403 Forbidden;
+        stop
+      endif
+    else (no - cajero/gerente)
+      :Continuar;
+    endif
+
+    :Verificar si Pago Ya Existe;
+
+    if (¿Pago Encontrado?) then (sí)
+      :ROLLBACK;
+      :Retornar 409 Conflict\n"Pago ya registrado";
+      stop
+    else (no)
+      :INSERT INTO payments\n(order_id, payment_method, amount);
+
+      :COMMIT TRANSACTION;
+
+      :Retornar 201 Created\ncon Detalles de Pago;
+    endif
+
+  else (no)
+    :ROLLBACK;
+    :Retornar 404 Not Found;
+    stop
+  endif
+}
+
+partition "Generación de Reportes (Gerente)" {
+
+  if (¿Usuario es Gerente?) then (sí)
+
+    :Determinar Período de Reporte\n(daily/weekly/monthly);
+
+    fork
+      :Agregar Ventas Totales\ny Conteo de Órdenes;
+    fork again
+      :Agrupar por Método de Pago;
+    fork again
+      :Calcular Top 5 Productos\npor Cantidad Vendida;
+    end fork
+
+    :Compilar Datos del Reporte;
+
+    :Retornar 200 OK\ncon JSON de Reporte;
+
+  else (no)
+    :Retornar 403 Forbidden;
+    stop
+  endif
+}
+
+stop
+
+note right
+  **Patrones de Diseño Clave:**
+
+  1. Patrón de Transacción
+     - Garantiza consistencia de datos
+     - Operaciones atómicas
+
+  2. Patrón de Máquina de Estados
+     - Transiciones de estado de orden
+     - Valida cambios de estado
+
+  3. Control de Acceso Basado en Roles
+     - Aplicación mediante middleware
+     - Permisos de grano fino
+
+  4. Patrón de Bloqueo de Filas
+     - Previene condiciones de carrera
+     - Seguridad en órdenes concurrentes
+end note
+
+@enduml

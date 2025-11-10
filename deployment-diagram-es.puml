@@ -1,0 +1,259 @@
+@startuml Sistema_Don_Pastel_Diagrama_de_Despliegue
+!theme plain
+title Sistema Don Pastel - Diagrama de Despliegue
+
+skinparam node {
+  BackgroundColor LightBlue
+  BorderColor Black
+}
+
+skinparam component {
+  BackgroundColor LightYellow
+  BorderColor Black
+}
+
+skinparam database {
+  BackgroundColor LightGreen
+  BorderColor Black
+}
+
+skinparam artifact {
+  BackgroundColor LightCoral
+  BorderColor Black
+}
+
+node "Navegador Web Cliente" as ClientBrowser {
+  [Aplicación Web\nReact/Angular/Vue] as WebApp
+  note right of WebApp
+    **Interfaz de usuario para:**
+    • Clientes
+    • Cajeros
+    • Gerentes
+
+    **Funcionalidades:**
+    • Gestión de productos
+    • Creación de órdenes
+    • Procesamiento de pagos
+    • Reportes de ventas
+  end note
+}
+
+node "Cliente Móvil" as MobileClient {
+  [Aplicación Móvil\niOS/Android] as MobileApp
+  note right of MobileApp
+    **Plataformas:**
+    • Aplicación nativa
+    • Aplicación híbrida
+
+    **Características:**
+    • Acceso desde dispositivos móviles
+    • Interfaz adaptada a pantallas táctiles
+  end note
+}
+
+node "Servidor de Aplicación\n(Entorno Node.js)" as AppServer {
+  component "Servidor Express.js" as Express {
+    artifact "Aplicación Principal\napp.js | server.js" as MainApp
+
+    artifact "Pila de Middleware" as Middleware {
+      component [Middleware CORS] as CORSMw
+      component [Analizador JSON] as JSONParser
+      component [Middleware de Autenticación\n(Validación JWT)] as AuthMw
+      component [Middleware de Roles\n(RBAC)] as RoleMw
+      component [Manejadores de Errores] as ErrorHandlers
+    }
+
+    component "Capa de Rutas API" as Routes {
+      [Rutas de Autenticación\n/api/auth/*] as AuthRoutes
+      [Rutas de Productos\n/api/products/*] as ProductRoutes
+      [Rutas de Inventario\n/api/inventory/*] as InventoryRoutes
+      [Rutas de Órdenes\n/api/orders/*] as OrderRoutes
+      [Rutas de Pagos\n/api/payments/*] as PaymentRoutes
+      [Rutas de Reportes\n/api/reports/*] as ReportRoutes
+    }
+
+    component "Capa de Controladores" as Controllers {
+      [authController] as AuthCtrl
+      [productController] as ProductCtrl
+      [inventoryController] as InventoryCtrl
+      [orderController] as OrderCtrl
+      [paymentController] as PaymentCtrl
+      [reportController] as ReportCtrl
+    }
+
+    component "Capa de Acceso a Datos" as DBLayer {
+      [Pool de Conexiones\n(Biblioteca pg)] as ConnectionPool
+      [Interfaz de Consultas\nSQL Parametrizadas] as QueryInterface
+      [Gestor de Transacciones\nACID Compliance] as TransactionMgr
+    }
+  }
+
+  artifact "Configuración .env\nVariables de Entorno" as EnvConfig
+  note right of EnvConfig
+    **Variables clave:**
+    • PORT=3000
+    • NODE_ENV=development
+    • DB_HOST=localhost
+    • DB_PORT=5432
+    • DB_NAME=don_pastel
+    • DB_USER=postgres
+    • DB_PASSWORD=***
+    • JWT_SECRET=***
+    • JWT_EXPIRES=2h
+    • LOW_STOCK_THRESHOLD=10
+  end note
+}
+
+node "Servidor de Base de Datos\nPostgreSQL 12+" as DBServer {
+  database "Base de Datos\ndon_pastel" as PostgresDB {
+    frame "Esquema de Datos" {
+      component [Tabla users\n(Usuarios del sistema)] as UsersTable
+      component [Tabla products\n(Catálogo de productos)] as ProductsTable
+      component [Tabla inventory\n(Niveles de stock)] as InventoryTable
+      component [Tabla orders\n(Órdenes de compra)] as OrdersTable
+      component [Tabla order_items\n(Detalles de órdenes)] as OrderItemsTable
+      component [Tabla payments\n(Registro de pagos)] as PaymentsTable
+    }
+
+    note bottom of PostgresDB
+      **Características de BD:**
+      • Transacciones ACID
+      • Bloqueo a nivel de fila (FOR UPDATE)
+      • Claves foráneas con CASCADE
+      • Restricciones CHECK
+      • Índices únicos (UNIQUE)
+    end note
+  }
+
+  artifact "Scripts SQL\nschema.sql | seed.sql" as SQLScripts
+  note right of SQLScripts
+    **Inicialización:**
+    • Creación de tablas
+    • Definición de restricciones
+    • Datos de prueba (seed)
+    • Usuario gerente por defecto
+  end note
+}
+
+node "Servidor de Autenticación\n(Integrado en Node.js)" as AuthServer {
+  component "Servicio JWT" as JWTService {
+    [Generador de Tokens\n(jsonwebtoken)] as TokenGen
+    [Validador de Tokens] as TokenValidator
+    [Hash de Contraseñas\n(bcryptjs)] as PasswordHasher
+  }
+
+  note right of JWTService
+    **Seguridad:**
+    • JWT con firma HMAC
+    • Expiración de 2 horas
+    • Bcrypt con cost 10
+    • Tokens Bearer en headers
+  end note
+}
+
+node "Herramientas de Gestión\n(Implementación Futura)" as ManagementTools {
+  [Agregador de Logs\n(Winston/Morgan)] as LogAggregator
+  [Panel de Monitoreo\n(Grafana)] as MonitoringDash
+  [Recolector de Métricas\n(Prometheus)] as MetricsCollector
+  [Gestor de Procesos\n(PM2)] as ProcessManager
+  [Proxy Inverso\n(Nginx)] as ReverseProxy
+  [Contenedores\n(Docker)] as DockerContainers
+
+  note right of ManagementTools
+    **Estado:** Pendiente de implementación
+
+    **Mejoras planificadas:**
+    • Monitoreo en tiempo real
+    • Balance de carga
+    • Contenedorización
+    • CI/CD Pipeline
+    • Logs centralizados
+  end note
+}
+
+' ========== CONEXIONES ENTRE COMPONENTES ==========
+
+' Clientes -> Servidor de Aplicación
+ClientBrowser --> Express : **HTTPS/HTTP**\nLlamadas REST API\nFormato JSON\nAutenticación Bearer Token
+MobileClient --> Express : **HTTPS/HTTP**\nLlamadas REST API\nFormato JSON\nAutenticación Bearer Token
+
+' Flujo interno del servidor de aplicación
+MainApp --> Middleware : Pipeline de Peticiones
+Middleware --> Routes : Peticiones Autenticadas\ny Validadas
+Routes --> Controllers : Invocación de\nManejadores de Rutas
+Controllers --> DBLayer : Consultas SQL\nParametrizadas
+Controllers --> JWTService : Operaciones de\nAutenticación y Autorización
+
+' Servidor de Aplicación -> Base de Datos
+DBLayer --> PostgresDB : **TCP/IP**\nPuerto 5432\nPool de Conexiones\nPersistente
+
+' Configuración del sistema
+EnvConfig ..> MainApp : Variables de\nEntorno
+SQLScripts ..> PostgresDB : Inicialización\nde Base de Datos
+
+' Monitoreo y gestión (futuro)
+Express ..> ManagementTools : Logs, Métricas\ny Telemetría\n(Futuro)
+
+' ========== NOTAS ADICIONALES ==========
+
+note top of AppServer
+  **Stack Tecnológico:**
+  • Node.js (Runtime JavaScript)
+  • Express.js 5.1.0 (Framework Web)
+  • ES Modules (import/export)
+  • Puerto por defecto: 3000
+  • Gestor de paquetes: pnpm
+
+  **Arquitectura:**
+  • MVC simplificado
+  • Middleware-based
+  • Sin ORM (SQL directo)
+end note
+
+note top of DBServer
+  **Especificaciones:**
+  • PostgreSQL 12 o superior
+  • Soporte completo de ACID
+  • Bloqueo optimista y pesimista
+  • Integridad referencial
+  • Restricciones de validación
+
+  **Tablas principales:**
+  • 6 tablas relacionales
+  • Cascadas automáticas
+  • Timestamps automáticos
+end note
+
+note bottom of ClientBrowser
+  **Protocolos de Comunicación:**
+  • API REST JSON
+  • Autenticación Bearer Token
+  • CORS habilitado
+  • Stateless (sin sesiones)
+
+  **Métodos HTTP:**
+  • GET (lectura)
+  • POST (creación)
+  • PUT/PATCH (actualización)
+  • DELETE (eliminación)
+end note
+
+legend right
+  **Leyenda de Componentes:**
+  |<#LightBlue> Nodo (Servidor/Cliente) |
+  |<#LightYellow> Componente (Módulo lógico) |
+  |<#LightGreen> Base de Datos |
+  |<#LightCoral> Artefacto (Archivo/Configuración) |
+
+  **Protocolos de Red:**
+  ──── HTTP/HTTPS (REST API)
+  ──── TCP/IP (Conexión BD)
+  ···· Configuración/Dependencias
+
+  **Roles de Usuario:**
+  • **Gerente:** Acceso total al sistema
+  • **Cajero:** Gestión de órdenes y pagos
+  • **Cliente:** Compras y consultas propias
+endlegend
+
+@enduml

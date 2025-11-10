@@ -1,0 +1,193 @@
+@startuml Don Pastel System - Interaction Overview Diagram
+
+title Don Pastel System - Interaction Overview Diagram\nComplete Order Processing Flow
+
+start
+
+:User Request Received;
+
+partition "Authentication & Authorization" {
+  :Validate JWT Token;
+
+  if (Token Valid?) then (yes)
+    :Extract user.id and user.role;
+  else (no)
+    :Return 401 Unauthorized;
+    stop
+  endif
+
+  :Check Role Permissions;
+
+  if (Has Permission?) then (yes)
+    :Continue to Handler;
+  else (no)
+    :Return 403 Forbidden;
+    stop
+  endif
+}
+
+partition "Order Creation Process" {
+
+  :Parse Request Body\n{items: [{product_id, quantity}]};
+
+  :BEGIN TRANSACTION;
+
+  fork
+    :Lock Inventory Rows\n(SELECT FOR UPDATE);
+  fork again
+    :Validate Products Exist;
+  end fork
+
+  :Check Stock Availability;
+
+  if (Sufficient Stock?) then (yes)
+
+    :Get Product Prices;
+
+    :Calculate Total Amount;
+
+    partition "Database Operations" {
+      fork
+        :INSERT INTO orders\n(user_id, status='pendiente',\ntotal_amount);
+        :Get order_id;
+      fork again
+        :INSERT INTO order_items\n(for each product);
+        :Store unit_price snapshot;
+      fork again
+        :UPDATE inventory\n(decrement stock_level);
+        :Update last_updated timestamp;
+      end fork
+    }
+
+    :COMMIT TRANSACTION;
+
+    :Fetch Complete Order Details;
+
+    :Return 201 Created\nwith Order Data;
+
+  else (no)
+    :ROLLBACK TRANSACTION;
+    :Return 400 Bad Request\n"Insufficient stock";
+    stop
+  endif
+}
+
+partition "Order Status Updates (Lifecycle)" {
+
+  :Order Status: pendiente;
+
+  repeat
+    :Cajero/Gerente Updates Status;
+
+    if (Valid Transition?) then (yes)
+      :Update Order Status;
+
+      switch (New Status?)
+      case (en_preparacion)
+        :Kitchen Prepares Order;
+      case (listo)
+        :Notify Customer\nOrder Ready;
+      case (entregado)
+        :Mark as Delivered;
+        detach
+      endswitch
+
+    else (no)
+      :Return 400 Bad Request\n"Invalid transition";
+      stop
+    endif
+
+  repeat while (Status != entregado?)
+
+}
+
+partition "Payment Processing" {
+
+  :Customer Initiates Payment;
+
+  :BEGIN TRANSACTION;
+
+  :Lock Order Row\n(SELECT FOR UPDATE);
+
+  if (Order Exists?) then (yes)
+
+    if (Cliente Role?) then (yes)
+      if (Order belongs to user?) then (yes)
+        :Continue;
+      else (no)
+        :ROLLBACK;
+        :Return 403 Forbidden;
+        stop
+      endif
+    else (no - cajero/gerente)
+      :Continue;
+    endif
+
+    :Check Payment Already Exists;
+
+    if (Payment Found?) then (yes)
+      :ROLLBACK;
+      :Return 409 Conflict\n"Payment already recorded";
+      stop
+    else (no)
+      :INSERT INTO payments\n(order_id, payment_method, amount);
+
+      :COMMIT TRANSACTION;
+
+      :Return 201 Created\nwith Payment Details;
+    endif
+
+  else (no)
+    :ROLLBACK;
+    :Return 404 Not Found;
+    stop
+  endif
+}
+
+partition "Reports Generation (Gerente)" {
+
+  if (User is Gerente?) then (yes)
+
+    :Determine Report Period\n(daily/weekly/monthly);
+
+    fork
+      :Aggregate Total Sales\nand Order Count;
+    fork again
+      :Group by Payment Method;
+    fork again
+      :Calculate Top 5 Products\nby Quantity Sold;
+    end fork
+
+    :Compile Report Data;
+
+    :Return 200 OK\nwith Report JSON;
+
+  else (no)
+    :Return 403 Forbidden;
+    stop
+  endif
+}
+
+stop
+
+note right
+  **Key Design Patterns:**
+
+  1. Transaction Pattern
+     - Ensures data consistency
+     - Atomic operations
+
+  2. State Machine Pattern
+     - Order status transitions
+     - Validates state changes
+
+  3. Role-Based Access Control
+     - Middleware enforcement
+     - Fine-grained permissions
+
+  4. Row Locking Pattern
+     - Prevents race conditions
+     - Concurrent order safety
+end note
+
+@enduml

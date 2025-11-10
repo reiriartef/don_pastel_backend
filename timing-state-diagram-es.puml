@@ -1,0 +1,279 @@
+@startuml Sistema Don Pastel - Diagramas de Tiempo y Estado
+
+title Sistema Don Pastel - Diagramas Combinados de Tiempo y Estado
+
+'================================
+' DIAGRAMA DE MÁQUINA DE ESTADOS
+'================================
+
+state "Máquina de Estados de Orden" as OrderStateMachine {
+
+  state Pendiente {
+    Pendiente : entrada / Establecer status='pendiente'
+    Pendiente : entrada / Monto total calculado
+    Pendiente : entrada / Inventario decrementado
+  }
+
+  state En_Preparacion {
+    En_Preparacion : entrada / Establecer status='en_preparacion'
+    En_Preparacion : hacer / Cocina preparando orden
+  }
+
+  state Listo {
+    Listo : entrada / Establecer status='listo'
+    Listo : entrada / Notificar al cliente
+    Listo : hacer / Esperando retiro/entrega
+  }
+
+  state Entregado {
+    Entregado : entrada / Establecer status='entregado'
+    Entregado : entrada / Orden completada
+  }
+
+  [*] --> Pendiente : Orden Creada\n(POST /api/orders)
+  Pendiente --> En_Preparacion : PATCH /api/orders/:id/status\n{status: "en_preparacion"}\n[cajero O gerente]
+  En_Preparacion --> Listo : PATCH /api/orders/:id/status\n{status: "listo"}\n[cajero O gerente]
+  Listo --> Entregado : PATCH /api/orders/:id/status\n{status: "entregado"}\n[cajero O gerente]
+  Entregado --> [*]
+
+  note right of Pendiente
+    Estado inicial cuando la orden
+    es creada por primera vez.
+    Cliente no ha pagado aún
+    (pago opcional en esta etapa).
+  end note
+
+  note right of En_Preparacion
+    Personal de cocina preparando
+    los productos de pastelería.
+    Cliente puede pagar durante
+    esta fase.
+  end note
+
+  note right of Listo
+    Orden lista para el cliente.
+    Cliente debe pagar antes o
+    durante el retiro.
+  end note
+
+  note right of Entregado
+    Estado final.
+    No se permiten más transiciones.
+    Pago debe estar registrado.
+  end note
+}
+
+'================================
+' MÁQUINA DE ESTADOS DE PAGO
+'================================
+
+state "Máquina de Estados de Pago" as PaymentStateMachine {
+
+  state Sin_Pago {
+    Sin_Pago : Orden existe sin pago
+    Sin_Pago : Permite múltiples intentos
+  }
+
+  state Pago_Iniciado {
+    Pago_Iniciado : entrada / BEGIN TRANSACTION
+    Pago_Iniciado : hacer / Bloquear fila de orden (FOR UPDATE)
+    Pago_Iniciado : hacer / Validar sin pago duplicado
+  }
+
+  state Pago_Fallido {
+    Pago_Fallido : entrada / ROLLBACK TRANSACTION
+    Pago_Fallido : salida / Retornar error 409/404/403
+  }
+
+  state Pago_Completado {
+    Pago_Completado : entrada / Registro de pago creado
+    Pago_Completado : Estado inmutable
+  }
+
+  [*] --> Sin_Pago : Orden Creada
+  Sin_Pago --> Pago_Iniciado : POST /api/payments\n{order_id, payment_method}
+  Pago_Iniciado --> Pago_Fallido : Pago duplicado detectado\nO orden no encontrada\nO acceso no autorizado
+  Pago_Iniciado --> Pago_Completado : INSERT INTO payments\nCOMMIT TRANSACTION
+  Pago_Fallido --> Sin_Pago : Reintento permitido
+  Pago_Completado --> [*]
+
+  note right of Sin_Pago
+    La orden puede existir sin pago.
+    Múltiples intentos de pago permitidos
+    hasta que sea exitoso.
+  end note
+
+  note right of Pago_Completado
+    Un pago por orden (constraint UNIQUE).
+    No se permiten más pagos.
+    Intentar duplicado retorna 409 Conflict.
+  end note
+}
+
+'================================
+' CICLO DE VIDA DE TOKEN JWT
+'================================
+
+state "Ciclo de Vida de Token JWT" as TokenLifecycle {
+
+  state No_Autenticado
+
+  state Autenticando {
+    Autenticando : entrada / Consultar usuario de base de datos
+    Autenticando : hacer / bcrypt.compare(password, hash)
+  }
+
+  state Autenticacion_Fallida {
+    Autenticacion_Fallida : salida / Retornar 401 Unauthorized
+  }
+
+  state Token_Emitido {
+    Token_Emitido : entrada / Firmar JWT con {id, role, exp}
+    Token_Emitido : Token expira en 2 horas (por defecto)
+    Token_Emitido : salida / Retornar {token, user}
+  }
+
+  state Autenticado {
+    Autenticado : Cliente incluye header Authorization
+    Autenticado : Esquema Bearer token
+  }
+
+  state Token_Expirado {
+    Token_Expirado : entrada / Firma JWT inválida (claim exp)
+    Token_Expirado : salida / Retornar 401 Unauthorized
+  }
+
+  [*] --> No_Autenticado : Usuario inicia sesión
+  No_Autenticado --> Autenticando : POST /api/auth/login\n{username, password}
+  Autenticando --> Autenticacion_Fallida : Credenciales inválidas
+  Autenticando --> Token_Emitido : Credenciales válidas
+  Autenticacion_Fallida --> No_Autenticado : Reintento permitido
+  Token_Emitido --> Autenticado : Cliente almacena token
+  Autenticado --> Token_Expirado : Después de JWT_EXPIRES (2h)
+  Autenticado --> No_Autenticado : Usuario cierra sesión
+  Token_Expirado --> No_Autenticado : Debe re-autenticarse
+
+  note right of Autenticado
+    Cada solicitud valida:
+    1. Firma del token (JWT_SECRET)
+    2. Expiración del token (claim exp)
+    3. Formato del token (esquema Bearer)
+
+    Middleware adjunta req.user = {id, role}
+  end note
+}
+
+'================================
+' ESTADO DE INVENTARIO
+'================================
+
+state "Gestión de Estado de Inventario" as InventoryState {
+
+  state Stock_Normal {
+    Stock_Normal : stock_level >= threshold
+    Stock_Normal : Disponible para órdenes
+  }
+
+  state Stock_Bajo {
+    Stock_Bajo : stock_level > 0 Y < threshold
+    Stock_Bajo : entrada / Aparece en GET /api/inventory/low
+    Stock_Bajo : Necesita alerta de reabastecimiento
+  }
+
+  state Sin_Stock {
+    Sin_Stock : stock_level = 0
+    Sin_Stock : No se pueden crear órdenes
+    Sin_Stock : salida / Creación de orden falla con 400
+  }
+
+  [*] --> Stock_Normal : Producto creado\nStock inicial establecido
+  Stock_Normal --> Stock_Bajo : stock_level < LOW_STOCK_THRESHOLD\n(por defecto: 10)
+  Stock_Normal --> Sin_Stock : stock_level = 0
+  Stock_Bajo --> Stock_Normal : PATCH /api/inventory/:id\n{stock_level: mayor}
+  Stock_Bajo --> Sin_Stock : Últimos items vendidos
+  Sin_Stock --> Stock_Bajo : PATCH /api/inventory/:id\n{stock_level: 1-9}
+  Sin_Stock --> Stock_Normal : PATCH /api/inventory/:id\n{stock_level: >= 10}
+  Stock_Normal --> Stock_Normal : Orden creada\n(decrementa stock_level)
+  Stock_Bajo --> Stock_Bajo : Orden creada\n(decrementa stock_level)
+
+  note right of Stock_Normal
+    Inventario actualizado atómicamente
+    con creación de orden en la
+    misma transacción.
+
+    Actualiza timestamp:
+    last_updated = CURRENT_TIMESTAMP
+  end note
+
+  note right of Stock_Bajo
+    Gerente puede consultar items de stock bajo:
+    GET /api/inventory/low?threshold=15
+
+    Retorna productos para reabastecer.
+  end note
+}
+
+'================================
+' ESTADO DE REGISTRO DE USUARIO
+'================================
+
+state "Estado de Registro de Usuario" as UserRegistration {
+
+  state Sin_Registrar
+
+  state Registro_Iniciado {
+    Registro_Iniciado : entrada / Validar entradas
+    Registro_Iniciado : hacer / Verificar unicidad de username
+    Registro_Iniciado : hacer / Validar enum de role
+  }
+
+  state Registro_Fallido {
+    Registro_Fallido : salida / Retornar error 400/409/403
+  }
+
+  state Hashing_Password {
+    Hashing_Password : entrada / bcrypt.hash(password, 10)
+  }
+
+  state Usuario_Creado {
+    Usuario_Creado : entrada / Retornar user_id
+    Usuario_Creado : Usuario puede hacer login ahora
+  }
+
+  [*] --> Sin_Registrar
+  Sin_Registrar --> Registro_Iniciado : POST /api/auth/register\n{username, password, role}\n[solo gerente]
+  Registro_Iniciado --> Registro_Fallido : Username ya existe\nO role inválido\nO no autorizado
+  Registro_Iniciado --> Hashing_Password : Validación pasada
+  Registro_Fallido --> Sin_Registrar
+  Hashing_Password --> Usuario_Creado : INSERT INTO users\n(username, password_hash, role)
+  Usuario_Creado --> [*]
+
+  note right of Registro_Iniciado
+    Solo el rol gerente puede crear usuarios.
+    Valida role en:
+    ['gerente', 'cajero', 'cliente']
+  end note
+}
+
+note bottom
+  **Reglas de Transición de Estados:**
+
+  1. Estado de Orden: pendiente → en_preparacion → listo → entregado
+     (Secuencial, sin transiciones hacia atrás)
+
+  2. Pago: Sin_Pago → Pago_Completado (Una vía, inmutable)
+
+  3. Token JWT: Sin estado, expira después de 2h, debe re-autenticarse
+
+  4. Inventario: Dinámico basado en verificaciones de umbral de stock_level
+
+  5. Registro de Usuario: Creación única, requiere autorización de gerente
+
+  **Características de Tiempo:**
+  - Token JWT: expiración de 2 horas (JWT_EXPIRES)
+  - Timeout de Transacción: por defecto del pool de conexiones
+  - Umbral de Stock Bajo: 10 unidades (LOW_STOCK_THRESHOLD)
+  - Ciclo de vida de orden: minutos a horas (depende de preparación)
+end note
+
+@enduml

@@ -1,0 +1,244 @@
+@startuml Don_Pastel_Component_Diagram
+!theme plain
+title Don Pastel System - Component Diagram
+
+skinparam component {
+  BackgroundColor LightYellow
+  BorderColor Black
+  FontSize 12
+}
+
+skinparam interface {
+  BackgroundColor LightBlue
+  BorderColor Black
+}
+
+skinparam package {
+  BackgroundColor LightGray
+  BorderColor Black
+  FontStyle bold
+}
+
+skinparam database {
+  BackgroundColor LightGreen
+  BorderColor Black
+}
+
+' ========== EXTERNAL CLIENTS ==========
+package "Client Layer" {
+  component [Web Application\nReact/Vue/Angular] as WebClient
+  component [Mobile Application\niOS/Android] as MobileClient
+}
+
+' ========== API GATEWAY / ENTRY POINT ==========
+package "API Gateway Layer" {
+  component [Express.js Server\napp.js] as ExpressApp
+
+  interface "REST API\nJSON/HTTP" as REST_API
+}
+
+' ========== MIDDLEWARE LAYER ==========
+package "Middleware Layer" {
+  component [CORS Middleware] as CORSMiddleware
+  component [JSON Body Parser] as JSONParser
+  component [Auth Middleware\nJWT Validation] as AuthMiddleware
+  component [Role Middleware\nRBAC] as RoleMiddleware
+  component [Error Handler\nGlobal Errors] as ErrorHandler
+}
+
+' ========== ROUTING LAYER ==========
+package "Routing Layer" {
+  component [Auth Routes\n/api/auth/*] as AuthRoutes
+  component [Product Routes\n/api/products/*] as ProductRoutes
+  component [Inventory Routes\n/api/inventory/*] as InventoryRoutes
+  component [Order Routes\n/api/orders/*] as OrderRoutes
+  component [Payment Routes\n/api/payments/*] as PaymentRoutes
+  component [Report Routes\n/api/reports/*] as ReportRoutes
+}
+
+' ========== CONTROLLER LAYER ==========
+package "Controller Layer (Business Logic)" {
+  component [Auth Controller] as AuthController
+  component [Product Controller] as ProductController
+  component [Inventory Controller] as InventoryController
+  component [Order Controller] as OrderController
+  component [Payment Controller] as PaymentController
+  component [Report Controller] as ReportController
+}
+
+' ========== SERVICE LAYER ==========
+package "Service Layer" {
+  component [JWT Service\njsonwebtoken] as JWTService
+  component [Password Service\nbcryptjs] as PasswordService
+  component [Date Service\ndate-fns] as DateService
+}
+
+' ========== DATA ACCESS LAYER ==========
+package "Data Access Layer" {
+  component [Database Manager\ndb/index.js] as DBManager
+
+  component [Query Interface\nParameterized SQL] as QueryInterface
+  component [Transaction Manager\nrunInTransaction] as TransactionManager
+  component [Connection Pool\npg Pool] as ConnectionPool
+}
+
+' ========== DATABASE ==========
+database "PostgreSQL Database\ndon_pastel" as PostgresDB {
+  frame "Tables" {
+    [users]
+    [products]
+    [inventory]
+    [orders]
+    [order_items]
+    [payments]
+  }
+}
+
+' ========== CONFIGURATION ==========
+package "Configuration" {
+  component [Environment Config\n.env] as EnvConfig
+}
+
+' ========== CLIENT CONNECTIONS ==========
+WebClient --> REST_API : HTTPS\nREST Calls
+MobileClient --> REST_API : HTTPS\nREST Calls
+
+REST_API --> ExpressApp
+
+' ========== EXPRESS TO MIDDLEWARE ==========
+ExpressApp --> CORSMiddleware : Request Pipeline
+CORSMiddleware --> JSONParser
+JSONParser --> AuthMiddleware
+AuthMiddleware --> RoleMiddleware
+
+' ========== MIDDLEWARE TO ROUTES ==========
+RoleMiddleware --> AuthRoutes
+RoleMiddleware --> ProductRoutes
+RoleMiddleware --> InventoryRoutes
+RoleMiddleware --> OrderRoutes
+RoleMiddleware --> PaymentRoutes
+RoleMiddleware --> ReportRoutes
+
+' ========== ROUTES TO CONTROLLERS ==========
+AuthRoutes --> AuthController
+ProductRoutes --> ProductController
+InventoryRoutes --> InventoryController
+OrderRoutes --> OrderController
+PaymentRoutes --> PaymentController
+ReportRoutes --> ReportController
+
+' ========== CONTROLLERS TO SERVICES ==========
+AuthController --> JWTService : Generate/Validate\nTokens
+AuthController --> PasswordService : Hash/Compare\nPasswords
+ReportController --> DateService : Calculate\nDate Ranges
+
+' ========== CONTROLLERS TO DATA ACCESS ==========
+AuthController --> DBManager : User Queries
+ProductController --> DBManager : Product CRUD
+InventoryController --> DBManager : Stock Queries
+OrderController --> TransactionManager : Transactional\nOrder Creation
+PaymentController --> TransactionManager : Transactional\nPayment Recording
+ReportController --> DBManager : Analytics Queries
+
+' ========== DATA ACCESS TO DATABASE ==========
+DBManager --> QueryInterface
+QueryInterface --> ConnectionPool
+TransactionManager --> ConnectionPool
+ConnectionPool --> PostgresDB : TCP/IP\nPort 5432
+
+' ========== CONFIGURATION ==========
+EnvConfig --> ExpressApp : PORT, NODE_ENV
+EnvConfig --> JWTService : JWT_SECRET,\nJWT_EXPIRES
+EnvConfig --> ConnectionPool : DB_HOST, DB_PORT,\nDB_NAME, DB_USER,\nDB_PASSWORD
+EnvConfig --> InventoryController : LOW_STOCK_THRESHOLD
+
+' ========== ERROR HANDLING ==========
+AuthController --> ErrorHandler : Errors
+ProductController --> ErrorHandler : Errors
+InventoryController --> ErrorHandler : Errors
+OrderController --> ErrorHandler : Errors
+PaymentController --> ErrorHandler : Errors
+ReportController --> ErrorHandler : Errors
+
+ErrorHandler --> ExpressApp : HTTP Error\nResponses
+
+' ========== NOTES ==========
+note right of ExpressApp
+  **Entry Point:**
+  • Port 3000 (default)
+  • Express.js 5.1.0
+  • ES Modules
+  • Health check endpoint
+end note
+
+note right of AuthMiddleware
+  **Security:**
+  • JWT Bearer Token
+  • Token expiration: 2h
+  • User context injection
+end note
+
+note right of RoleMiddleware
+  **RBAC Roles:**
+  • gerente (manager)
+  • cajero (cashier)
+  • cliente (customer)
+end note
+
+note right of TransactionManager
+  **ACID Guarantees:**
+  • BEGIN/COMMIT/ROLLBACK
+  • Row-level locking (FOR UPDATE)
+  • Atomic operations
+  • Rollback on error
+end note
+
+note bottom of PostgresDB
+  **Database Features:**
+  • PostgreSQL 12+
+  • Foreign key constraints
+  • Check constraints
+  • Unique constraints
+  • Cascade deletes
+  • Automatic timestamps
+end note
+
+note right of OrderController
+  **Key Operations:**
+  • Create order (transactional)
+  • Validate stock availability
+  • Atomic inventory deduction
+  • Status state machine:
+    pendiente → en_preparacion
+    → listo → entregado
+end note
+
+note right of PaymentController
+  **Payment Processing:**
+  • Prevent duplicate payments
+  • Validate order ownership
+  • Lock order during payment
+  • Record payment method
+end note
+
+legend right
+  **Component Types:**
+  Component - Application module
+  Interface - API contract
+  Database - Data storage
+  Package - Logical grouping
+
+  **Dependencies:**
+  ──> Required dependency
+  ··> Configuration dependency
+
+  **External Libraries:**
+  • express ^5.1.0
+  • pg ^8.12.0
+  • jsonwebtoken ^9.0.2
+  • bcryptjs ^2.4.3
+  • date-fns ^3.6.0
+  • cors ^2.8.5
+endlegend
+
+@enduml

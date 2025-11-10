@@ -1,0 +1,398 @@
+@startuml Don Pastel System - Sequence Diagrams
+
+title Don Pastel Backend System - Main Sequence Flows
+
+' ==================== AUTHENTICATION FLOW ====================
+== 1. Authentication Flow ==
+
+actor Cliente as client
+participant "API\n/api/auth/login" as api
+participant "authController" as authCtrl
+participant "Database\n(users)" as db
+participant "JWT\nLibrary" as jwt
+
+client -> api: POST /api/auth/login\n{username, password}
+activate api
+
+api -> authCtrl: login(req, res, next)
+activate authCtrl
+
+authCtrl -> db: SELECT * FROM users\nWHERE username = ?
+activate db
+db --> authCtrl: user record with\npassword_hash
+deactivate db
+
+authCtrl -> authCtrl: bcrypt.compare(password,\nuser.password_hash)
+
+alt Password Invalid
+    authCtrl --> api: 401 Unauthorized
+    api --> client: {success: false,\nmessage: "Invalid credentials"}
+else Password Valid
+    authCtrl -> jwt: sign({id, role},\nsecret, expiresIn: 2h)
+    activate jwt
+    jwt --> authCtrl: JWT token
+    deactivate jwt
+
+    authCtrl --> api: 200 OK
+    deactivate authCtrl
+    api --> client: {token, user: {id, username, role}}
+    deactivate api
+end
+
+...
+
+== 2. Product Management Flow (Gerente Only) ==
+
+actor Gerente as gerente
+participant "API\n/api/products" as prodApi
+participant "Auth\nMiddleware" as authMw
+participant "Role\nMiddleware" as roleMw
+participant "productController" as prodCtrl
+participant "Database\n(products)" as prodDb
+
+gerente -> prodApi: POST /api/products\nAuthorization: Bearer <token>\n{name, description, price}
+activate prodApi
+
+prodApi -> authMw: authRequired()
+activate authMw
+authMw -> authMw: Verify JWT token
+authMw -> authMw: Attach req.user = {id, role}
+authMw --> prodApi: next()
+deactivate authMw
+
+prodApi -> roleMw: requireRole('gerente')
+activate roleMw
+alt Role is not gerente
+    roleMw --> prodApi: 403 Forbidden
+    prodApi --> gerente: {success: false,\nmessage: "Insufficient privileges"}
+else Role is gerente
+    roleMw --> prodApi: next()
+    deactivate roleMw
+
+    prodApi -> prodCtrl: createProduct(req, res)
+    activate prodCtrl
+
+    prodCtrl -> prodDb: INSERT INTO products\n(name, description, price)\nVALUES (?, ?, ?)\nRETURNING *
+    activate prodDb
+    prodDb --> prodCtrl: new product record
+    deactivate prodDb
+
+    prodCtrl --> prodApi: 201 Created
+    deactivate prodCtrl
+    prodApi --> gerente: {product_id, name,\ndescription, price}
+    deactivate prodApi
+end
+
+...
+
+== 3. Order Creation Flow (With Transaction) ==
+
+actor Usuario as user
+participant "API\n/api/orders" as orderApi
+participant "Auth\nMiddleware" as authMw2
+participant "orderController" as orderCtrl
+participant "Database\n(transaction)" as txDb
+database "orders" as ordersTable
+database "order_items" as orderItemsTable
+database "inventory" as inventoryTable
+
+user -> orderApi: POST /api/orders\nAuthorization: Bearer <token>\n{items: [{product_id, quantity}]}
+activate orderApi
+
+orderApi -> authMw2: authRequired()
+activate authMw2
+authMw2 --> orderApi: req.user authenticated
+deactivate authMw2
+
+orderApi -> orderCtrl: createOrder(req, res)
+activate orderCtrl
+
+orderCtrl -> txDb: BEGIN TRANSACTION
+activate txDb
+
+orderCtrl -> txDb: SELECT product_id, stock_level\nFROM inventory\nWHERE product_id IN (...)\nFOR UPDATE
+txDb -> inventoryTable: Lock rows
+activate inventoryTable
+inventoryTable --> txDb: [{product_id, stock_level}]
+txDb --> orderCtrl: inventory records (locked)
+
+orderCtrl -> orderCtrl: Validate stock availability\nfor all items
+
+alt Insufficient Stock
+    orderCtrl -> txDb: ROLLBACK
+    txDb -> inventoryTable: Release locks
+    deactivate inventoryTable
+    txDb --> orderCtrl: Transaction rolled back
+    deactivate txDb
+    orderCtrl --> orderApi: 400 Bad Request
+    orderApi --> user: {success: false,\nmessage: "Insufficient stock"}
+else Stock Available
+    orderCtrl -> txDb: SELECT price FROM products\nWHERE product_id IN (...)
+    activate txDb
+    txDb --> orderCtrl: product prices
+
+    orderCtrl -> orderCtrl: Calculate total_amount
+
+    orderCtrl -> txDb: INSERT INTO orders\n(user_id, status, total_amount)\nVALUES (?, 'pendiente', ?)\nRETURNING order_id
+    txDb -> ordersTable: Insert order
+    activate ordersTable
+    ordersTable --> txDb: order_id
+    txDb --> orderCtrl: order_id
+
+    loop For each item
+        orderCtrl -> txDb: INSERT INTO order_items\n(order_id, product_id,\nquantity, unit_price)
+        txDb -> orderItemsTable: Insert item
+        activate orderItemsTable
+        orderItemsTable --> txDb: order_item_id
+        txDb --> orderCtrl: order_item_id
+    end
+
+    loop For each product
+        orderCtrl -> txDb: UPDATE inventory\nSET stock_level = stock_level - ?,\nlast_updated = NOW()\nWHERE product_id = ?
+        txDb -> inventoryTable: Update stock
+        inventoryTable --> txDb: updated
+        txDb --> orderCtrl: updated
+    end
+
+    orderCtrl -> txDb: COMMIT
+    txDb -> inventoryTable: Release locks
+    deactivate inventoryTable
+    txDb -> ordersTable: Commit
+    deactivate ordersTable
+    txDb -> orderItemsTable: Commit
+    deactivate orderItemsTable
+    txDb --> orderCtrl: Transaction committed
+    deactivate txDb
+
+    orderCtrl -> txDb: SELECT order details\nwith items
+    activate txDb
+    txDb --> orderCtrl: {order_id, status,\ntotal_amount, items}
+    deactivate txDb
+
+    orderCtrl --> orderApi: 201 Created
+    deactivate orderCtrl
+    orderApi --> user: {order_id, status,\ntotal_amount, order_date, items}
+    deactivate orderApi
+end
+
+...
+
+== 4. Order Status Update Flow (State Machine) ==
+
+actor Cajero as cashier
+participant "API\n/api/orders/:id/status" as statusApi
+participant "Auth\nMiddleware" as authMw3
+participant "Role\nMiddleware" as roleMw2
+participant "orderController" as orderCtrl2
+participant "Database\n(orders)" as orderDb
+
+cashier -> statusApi: PATCH /api/orders/123/status\nAuthorization: Bearer <token>\n{status: "en_preparacion"}
+activate statusApi
+
+statusApi -> authMw3: authRequired()
+activate authMw3
+authMw3 --> statusApi: Authenticated
+deactivate authMw3
+
+statusApi -> roleMw2: requireRole('cajero', 'gerente')
+activate roleMw2
+roleMw2 --> statusApi: Authorized
+deactivate roleMw2
+
+statusApi -> orderCtrl2: updateStatus(req, res)
+activate orderCtrl2
+
+orderCtrl2 -> orderDb: SELECT status FROM orders\nWHERE order_id = ?
+activate orderDb
+orderDb --> orderCtrl2: {status: "pendiente"}
+
+orderCtrl2 -> orderCtrl2: Validate state transition\npendiente -> en_preparacion\n(Valid transitions map)
+
+alt Invalid Transition
+    orderCtrl2 --> statusApi: 400 Bad Request
+    statusApi --> cashier: {success: false,\nmessage: "Invalid status transition"}
+else Valid Transition
+    orderCtrl2 -> orderDb: UPDATE orders\nSET status = 'en_preparacion'\nWHERE order_id = ?
+    orderDb --> orderCtrl2: Updated
+    deactivate orderDb
+
+    orderCtrl2 --> statusApi: 200 OK
+    deactivate orderCtrl2
+    statusApi --> cashier: {order_id, status: "en_preparacion",\ntotal_amount, order_date}
+    deactivate statusApi
+end
+
+...
+
+== 5. Payment Recording Flow ==
+
+actor Cliente as client2
+participant "API\n/api/payments" as payApi
+participant "Auth\nMiddleware" as authMw4
+participant "paymentController" as payCtrl
+participant "Database\n(transaction)" as payDb
+database "orders" as ordersTable2
+database "payments" as paymentsTable
+
+client2 -> payApi: POST /api/payments\nAuthorization: Bearer <token>\n{order_id: 123, payment_method: "efectivo"}
+activate payApi
+
+payApi -> authMw4: authRequired()
+activate authMw4
+authMw4 --> payApi: Authenticated (req.user)
+deactivate authMw4
+
+payApi -> payCtrl: createPayment(req, res)
+activate payCtrl
+
+payCtrl -> payDb: BEGIN TRANSACTION
+activate payDb
+
+payCtrl -> payDb: SELECT * FROM orders\nWHERE order_id = ?\nFOR UPDATE
+payDb -> ordersTable2: Lock order row
+activate ordersTable2
+ordersTable2 --> payDb: order record
+payDb --> payCtrl: {order_id, user_id,\ntotal_amount}
+
+alt Order Not Found
+    payCtrl -> payDb: ROLLBACK
+    payDb --> payCtrl: Rolled back
+    deactivate payDb
+    payCtrl --> payApi: 404 Not Found
+    payApi --> client2: {success: false,\nmessage: "Order not found"}
+else Cliente Role Check
+    payCtrl -> payCtrl: Check if req.user.role === 'cliente'\nAND order.user_id !== req.user.id
+
+    alt Unauthorized Access (Cliente accessing other's order)
+        payCtrl -> payDb: ROLLBACK
+        deactivate payDb
+        payCtrl --> payApi: 403 Forbidden
+        payApi --> client2: {success: false,\nmessage: "Cannot pay for other users' orders"}
+    else Authorized
+        payCtrl -> payDb: SELECT * FROM payments\nWHERE order_id = ?
+        activate payDb
+        payDb -> paymentsTable: Check existing payment
+        activate paymentsTable
+        paymentsTable --> payDb: null or payment record
+        payDb --> payCtrl: existing payment check
+
+        alt Payment Already Exists
+            payCtrl -> payDb: ROLLBACK
+            payDb --> payCtrl: Rolled back
+            deactivate payDb
+            payCtrl --> payApi: 409 Conflict
+            payApi --> client2: {success: false,\nmessage: "Payment already recorded"}
+        else No Payment Yet
+            payCtrl -> payDb: INSERT INTO payments\n(order_id, payment_method, amount)\nVALUES (?, ?, ?)\nRETURNING *
+            payDb -> paymentsTable: Insert payment
+            paymentsTable --> payDb: payment_id
+            payDb --> payCtrl: {payment_id, order_id,\npayment_method, amount}
+
+            payCtrl -> payDb: COMMIT
+            payDb -> ordersTable2: Release locks
+            deactivate ordersTable2
+            payDb -> paymentsTable: Commit
+            deactivate paymentsTable
+            payDb --> payCtrl: Transaction committed
+            deactivate payDb
+
+            payCtrl -> payDb: SELECT order with items
+            activate payDb
+            payDb --> payCtrl: {order, payment, items}
+            deactivate payDb
+
+            payCtrl --> payApi: 201 Created
+            deactivate payCtrl
+            payApi --> client2: {order, payment, items}
+            deactivate payApi
+        end
+    end
+end
+
+...
+
+== 6. Sales Report Generation Flow ==
+
+actor Gerente as gerente2
+participant "API\n/api/reports/sales" as reportApi
+participant "Auth\nMiddleware" as authMw5
+participant "Role\nMiddleware" as roleMw3
+participant "reportController" as reportCtrl
+participant "Database\n(queries)" as reportDb
+
+gerente2 -> reportApi: GET /api/reports/sales?period=weekly\nAuthorization: Bearer <token>
+activate reportApi
+
+reportApi -> authMw5: authRequired()
+activate authMw5
+authMw5 --> reportApi: Authenticated
+deactivate authMw5
+
+reportApi -> roleMw3: requireRole('gerente')
+activate roleMw3
+roleMw3 --> reportApi: Authorized
+deactivate roleMw3
+
+reportApi -> reportCtrl: salesReport(req, res)
+activate reportCtrl
+
+reportCtrl -> reportCtrl: Calculate date range\nfor 'weekly' period\n(7 days ago to now)
+
+reportCtrl -> reportDb: SELECT COUNT(*) as orders_count,\nSUM(total_amount) as total_sales\nFROM orders\nJOIN payments USING (order_id)\nWHERE payment_date >= ?
+activate reportDb
+reportDb --> reportCtrl: {orders_count, total_sales}
+
+reportCtrl -> reportDb: SELECT payment_method,\nCOUNT(*) as count,\nSUM(amount) as total\nFROM payments\nWHERE payment_date >= ?\nGROUP BY payment_method
+reportDb --> reportCtrl: [{payment_method, count, total}, ...]
+
+reportCtrl -> reportDb: SELECT p.name, p.product_id,\nSUM(oi.quantity) as total_quantity\nFROM order_items oi\nJOIN products p USING (product_id)\nJOIN orders o USING (order_id)\nWHERE o.order_date >= ?\nGROUP BY p.product_id\nORDER BY total_quantity DESC\nLIMIT 5
+reportDb --> reportCtrl: Top 5 products
+deactivate reportDb
+
+reportCtrl -> reportCtrl: Compile report data
+
+reportCtrl --> reportApi: 200 OK
+deactivate reportCtrl
+reportApi --> gerente2: {period: "weekly",\nfrom: "2025-10-09",\nsummary: {...},\npayment_methods: [...],\ntop_products: [...]}
+deactivate reportApi
+
+...
+
+== 7. Inventory Low Stock Alert Flow ==
+
+actor Gerente as gerente3
+participant "API\n/api/inventory/low" as invApi
+participant "Auth\nMiddleware" as authMw6
+participant "Role\nMiddleware" as roleMw4
+participant "inventoryController" as invCtrl
+participant "Database\n(inventory)" as invDb
+
+gerente3 -> invApi: GET /api/inventory/low?threshold=15\nAuthorization: Bearer <token>
+activate invApi
+
+invApi -> authMw6: authRequired()
+activate authMw6
+authMw6 --> invApi: Authenticated
+deactivate authMw6
+
+invApi -> roleMw4: requireRole('gerente')
+activate roleMw4
+roleMw4 --> invApi: Authorized
+deactivate roleMw4
+
+invApi -> invCtrl: lowStock(req, res)
+activate invCtrl
+
+invCtrl -> invCtrl: Get threshold from query\nor env (default: 10)
+
+invCtrl -> invDb: SELECT p.product_id, p.name,\ni.stock_level\nFROM inventory i\nJOIN products p USING (product_id)\nWHERE i.stock_level < ?
+activate invDb
+invDb --> invCtrl: [{product_id, name, stock_level}, ...]
+deactivate invDb
+
+invCtrl --> invApi: 200 OK
+deactivate invCtrl
+invApi --> gerente3: [{product_id: 2,\nname: "Pastel Vainilla",\nstock_level: 8}, ...]
+deactivate invApi
+
+@enduml

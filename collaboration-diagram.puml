@@ -1,0 +1,96 @@
+@startuml Don Pastel System - Collaboration Diagram
+
+title Don Pastel System - Collaboration Diagram (Communication Diagram)\nOrder Creation Flow
+
+' Define objects
+object ":Cliente" as client
+object ":API Gateway\n/api/orders" as api
+object ":Auth\nMiddleware" as auth
+object ":Order\nController" as controller
+object ":Database\nConnection Pool" as dbPool
+object ":Transaction\nManager" as txManager
+object ":Inventory\nTable" as inventory
+object ":Orders\nTable" as orders
+object ":Order_Items\nTable" as orderItems
+object ":Products\nTable" as products
+
+' Connections with numbered messages
+client -down- api : 1: POST /api/orders\n{items: [{product_id, quantity}]}\nAuthorization: Bearer <token>
+
+api -down- auth : 2: authRequired()
+
+auth -down- api : 3: req.user = {id, role}
+
+api -down- controller : 4: createOrder(req, res, next)
+
+controller -down- dbPool : 5: getClient()
+
+dbPool -down- controller : 6: dedicated client
+
+controller -down- txManager : 7: BEGIN TRANSACTION
+
+txManager -down- inventory : 8: SELECT * FROM inventory\nWHERE product_id IN (...)\nFOR UPDATE
+
+inventory -down- txManager : 9: [{product_id, stock_level}]\n(rows locked)
+
+txManager -down- controller : 10: inventory data
+
+controller -down- controller : 11: validateStockAvailability()
+
+controller -down- products : 12: SELECT price FROM products\nWHERE product_id IN (...)
+
+products -down- controller : 13: product prices
+
+controller -down- controller : 14: calculateTotalAmount()
+
+controller -down- orders : 15: INSERT INTO orders\n(user_id, status, total_amount)\nRETURNING order_id
+
+orders -down- controller : 16: order_id
+
+controller -down- orderItems : 17: INSERT INTO order_items\n(order_id, product_id,\nquantity, unit_price)
+
+orderItems -down- controller : 18: order_item_id (for each)
+
+controller -down- inventory : 19: UPDATE inventory\nSET stock_level = stock_level - ?\nWHERE product_id = ?
+
+inventory -down- controller : 20: updated rows
+
+controller -down- txManager : 21: COMMIT
+
+txManager -down- inventory : 22: release locks
+
+txManager -down- orders : 23: commit changes
+
+txManager -down- orderItems : 24: commit changes
+
+txManager -down- controller : 25: transaction committed
+
+controller -down- dbPool : 26: SELECT order with items
+
+dbPool -down- controller : 27: {order_id, status,\ntotal_amount, items}
+
+controller -down- api : 28: res.status(201).json(order)
+
+api -down- client : 29: 201 Created\n{order_id, status,\ntotal_amount, order_date, items}
+
+note right of controller
+  Transaction ensures:
+  - Atomicity (all or nothing)
+  - Consistency (stock always valid)
+  - Isolation (row locks prevent conflicts)
+  - Durability (committed changes persist)
+end note
+
+note right of inventory
+  FOR UPDATE clause locks rows
+  preventing concurrent modifications
+  during transaction
+end note
+
+note left of client
+  Client roles: cliente, cajero, gerente
+  Each can create orders for themselves
+  Cajero and Gerente can create for anyone
+end note
+
+@enduml

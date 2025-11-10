@@ -1,0 +1,140 @@
+@startuml Don_Pastel_Activity_Diagram
+!theme plain
+title Sistema Don Pastel - Diagrama de Actividad\nProceso de Creación de Orden y Pago
+
+|#LightBlue|Cliente|
+start
+:Iniciar sesión con\nusuario y contraseña;
+
+|#LightGreen|Sistema de Autenticación|
+:Validar credenciales;
+if (¿Credenciales válidas?) then (sí)
+  :Generar token JWT;
+  :Retornar token y\ndatos de usuario;
+else (no)
+  |Cliente|
+  :Mostrar error\nde autenticación;
+  stop
+endif
+
+|Cliente|
+:Ver catálogo\nde productos;
+
+:Seleccionar productos\ny cantidades;
+
+:Enviar solicitud\nde orden;
+
+|#LightYellow|Controlador de Órdenes|
+:Validar token JWT;
+
+if (¿Token válido?) then (no)
+  |Cliente|
+  :Mostrar error 401\nNo autorizado;
+  stop
+else (sí)
+  :Iniciar transacción\nde base de datos;
+
+  |#LightCoral|Base de Datos|
+  :Bloquear filas de\ninventario (FOR UPDATE);
+
+  |Controlador de Órdenes|
+  repeat
+    :Verificar disponibilidad\nde producto;
+
+    if (¿Stock suficiente?) then (no)
+      :Rollback transacción;
+      |Cliente|
+      :Mostrar error\nstock insuficiente;
+      stop
+    endif
+  repeat while (¿Más productos?) is (sí)
+  ->no;
+
+  :Calcular monto total;
+
+  |Base de Datos|
+  :Insertar orden en tabla orders\n(status: pendiente);
+
+  :Insertar items en\ntabla order_items;
+
+  :Decrementar niveles\nde inventario;
+
+  :Commit transacción;
+
+  |Cliente|
+  :Recibir confirmación\nde orden con ID;
+
+  :Seleccionar método\nde pago;
+
+  :Enviar solicitud\nde pago;
+
+  |#LightYellow|Controlador de Pagos|
+  :Validar token JWT;
+
+  if (¿Usuario es dueño\nde la orden?) then (no)
+    :Mostrar error 403\nAcceso denegado;
+    stop
+  else (sí)
+    :Iniciar transacción\nde pago;
+
+    |Base de Datos|
+    :Bloquear orden\n(FOR UPDATE);
+
+    :Validar que orden existe;
+
+    if (¿Orden existe?) then (no)
+      |Cliente|
+      :Mostrar error\norden no encontrada;
+      stop
+    endif
+
+    |Controlador de Pagos|
+    if (¿Pago ya existe?) then (sí)
+      :Rollback transacción;
+      |Cliente|
+      :Mostrar error\npago duplicado;
+      stop
+    else (no)
+      |Base de Datos|
+      :Insertar pago en\ntabla payments;
+
+      :Commit transacción;
+
+      |Cliente|
+      :Recibir confirmación\nde pago;
+
+      :Mostrar detalles de\norden y pago;
+    endif
+  endif
+endif
+
+|#LightPink|Cajero/Gerente|
+:Actualizar estado\nde la orden;
+
+|Controlador de Órdenes|
+:Validar roles\n(cajero o gerente);
+
+if (¿Rol autorizado?) then (sí)
+  :Validar transición\nde estado válida;
+
+  if (¿Transición válida?) then (sí)
+    |Base de Datos|
+    :Actualizar estado\nde orden;
+    note right
+      pendiente → en_preparacion
+      en_preparacion → listo
+      listo → entregado
+    end note
+
+    |Cajero/Gerente|
+    :Mostrar confirmación\nde actualización;
+  else (no)
+    :Mostrar error\ntransición inválida;
+  endif
+else (no)
+  :Mostrar error 403\nAcceso denegado;
+endif
+
+stop
+
+@enduml

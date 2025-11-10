@@ -1,0 +1,281 @@
+@startuml Sistema_Don_Pastel_Diagrama_de_Componentes
+!theme plain
+title Sistema Don Pastel - Diagrama de Componentes
+
+skinparam component {
+  BackgroundColor LightYellow
+  BorderColor Black
+  FontSize 12
+}
+
+skinparam interface {
+  BackgroundColor LightBlue
+  BorderColor Black
+}
+
+skinparam package {
+  BackgroundColor LightGray
+  BorderColor Black
+  FontStyle bold
+}
+
+skinparam database {
+  BackgroundColor LightGreen
+  BorderColor Black
+}
+
+' ========== CLIENTES EXTERNOS ==========
+package "Capa de Clientes" {
+  component [Aplicación Web\nReact/Vue/Angular] as WebClient
+  component [Aplicación Móvil\niOS/Android] as MobileClient
+}
+
+' ========== PUERTA DE ENLACE API / PUNTO DE ENTRADA ==========
+package "Capa de Puerta de Enlace API" {
+  component [Servidor Express.js\napp.js] as ExpressApp
+
+  interface "API REST\nJSON/HTTP" as REST_API
+}
+
+' ========== CAPA DE MIDDLEWARE ==========
+package "Capa de Middleware" {
+  component [Middleware CORS] as CORSMiddleware
+  component [Analizador JSON] as JSONParser
+  component [Middleware de Autenticación\nValidación JWT] as AuthMiddleware
+  component [Middleware de Roles\nRBAC] as RoleMiddleware
+  component [Manejador de Errores\nErrores Globales] as ErrorHandler
+}
+
+' ========== CAPA DE ENRUTAMIENTO ==========
+package "Capa de Enrutamiento" {
+  component [Rutas de Autenticación\n/api/auth/*] as AuthRoutes
+  component [Rutas de Productos\n/api/products/*] as ProductRoutes
+  component [Rutas de Inventario\n/api/inventory/*] as InventoryRoutes
+  component [Rutas de Órdenes\n/api/orders/*] as OrderRoutes
+  component [Rutas de Pagos\n/api/payments/*] as PaymentRoutes
+  component [Rutas de Reportes\n/api/reports/*] as ReportRoutes
+}
+
+' ========== CAPA DE CONTROLADORES ==========
+package "Capa de Controladores (Lógica de Negocio)" {
+  component [Controlador de Autenticación] as AuthController
+  component [Controlador de Productos] as ProductController
+  component [Controlador de Inventario] as InventoryController
+  component [Controlador de Órdenes] as OrderController
+  component [Controlador de Pagos] as PaymentController
+  component [Controlador de Reportes] as ReportController
+}
+
+' ========== CAPA DE SERVICIOS ==========
+package "Capa de Servicios" {
+  component [Servicio JWT\njsonwebtoken] as JWTService
+  component [Servicio de Contraseñas\nbcryptjs] as PasswordService
+  component [Servicio de Fechas\ndate-fns] as DateService
+}
+
+' ========== CAPA DE ACCESO A DATOS ==========
+package "Capa de Acceso a Datos" {
+  component [Gestor de Base de Datos\ndb/index.js] as DBManager
+
+  component [Interfaz de Consultas\nSQL Parametrizado] as QueryInterface
+  component [Gestor de Transacciones\nrunInTransaction] as TransactionManager
+  component [Pool de Conexiones\npg Pool] as ConnectionPool
+}
+
+' ========== BASE DE DATOS ==========
+database "Base de Datos PostgreSQL\ndon_pastel" as PostgresDB {
+  frame "Tablas" {
+    [users\nUsuarios del sistema]
+    [products\nCatálogo de productos]
+    [inventory\nNiveles de stock]
+    [orders\nÓrdenes de compra]
+    [order_items\nDetalles de órdenes]
+    [payments\nRegistro de pagos]
+  }
+}
+
+' ========== CONFIGURACIÓN ==========
+package "Configuración" {
+  component [Configuración de Entorno\n.env] as EnvConfig
+}
+
+' ========== CONEXIONES DE CLIENTES ==========
+WebClient --> REST_API : HTTPS\nLlamadas REST
+MobileClient --> REST_API : HTTPS\nLlamadas REST
+
+REST_API --> ExpressApp
+
+' ========== EXPRESS A MIDDLEWARE ==========
+ExpressApp --> CORSMiddleware : Pipeline de\nPeticiones
+CORSMiddleware --> JSONParser
+JSONParser --> AuthMiddleware
+AuthMiddleware --> RoleMiddleware
+
+' ========== MIDDLEWARE A RUTAS ==========
+RoleMiddleware --> AuthRoutes
+RoleMiddleware --> ProductRoutes
+RoleMiddleware --> InventoryRoutes
+RoleMiddleware --> OrderRoutes
+RoleMiddleware --> PaymentRoutes
+RoleMiddleware --> ReportRoutes
+
+' ========== RUTAS A CONTROLADORES ==========
+AuthRoutes --> AuthController
+ProductRoutes --> ProductController
+InventoryRoutes --> InventoryController
+OrderRoutes --> OrderController
+PaymentRoutes --> PaymentController
+ReportRoutes --> ReportController
+
+' ========== CONTROLADORES A SERVICIOS ==========
+AuthController --> JWTService : Generar/Validar\nTokens
+AuthController --> PasswordService : Hashear/Comparar\nContraseñas
+ReportController --> DateService : Calcular\nRangos de Fechas
+
+' ========== CONTROLADORES A ACCESO DE DATOS ==========
+AuthController --> DBManager : Consultas de\nUsuarios
+ProductController --> DBManager : CRUD de\nProductos
+InventoryController --> DBManager : Consultas de\nStock
+OrderController --> TransactionManager : Creación\nTransaccional\nde Órdenes
+PaymentController --> TransactionManager : Registro\nTransaccional\nde Pagos
+ReportController --> DBManager : Consultas de\nAnalítica
+
+' ========== ACCESO DE DATOS A BASE DE DATOS ==========
+DBManager --> QueryInterface
+QueryInterface --> ConnectionPool
+TransactionManager --> ConnectionPool
+ConnectionPool --> PostgresDB : TCP/IP\nPuerto 5432
+
+' ========== CONFIGURACIÓN ==========
+EnvConfig --> ExpressApp : PORT, NODE_ENV
+EnvConfig --> JWTService : JWT_SECRET,\nJWT_EXPIRES
+EnvConfig --> ConnectionPool : DB_HOST, DB_PORT,\nDB_NAME, DB_USER,\nDB_PASSWORD
+EnvConfig --> InventoryController : LOW_STOCK_THRESHOLD
+
+' ========== MANEJO DE ERRORES ==========
+AuthController --> ErrorHandler : Errores
+ProductController --> ErrorHandler : Errores
+InventoryController --> ErrorHandler : Errores
+OrderController --> ErrorHandler : Errores
+PaymentController --> ErrorHandler : Errores
+ReportController --> ErrorHandler : Errores
+
+ErrorHandler --> ExpressApp : Respuestas HTTP\nde Error
+
+' ========== NOTAS ==========
+note right of ExpressApp
+  **Punto de Entrada:**
+  • Puerto 3000 (por defecto)
+  • Express.js 5.1.0
+  • Módulos ES (import/export)
+  • Endpoint de health check
+  • Inicialización en server.js
+end note
+
+note right of AuthMiddleware
+  **Seguridad:**
+  • Token Bearer JWT
+  • Expiración: 2 horas
+  • Inyección de contexto de usuario
+  • Validación de firma HMAC
+end note
+
+note right of RoleMiddleware
+  **Roles RBAC:**
+  • **gerente** (administrador completo)
+  • **cajero** (operaciones de ventas)
+  • **cliente** (autoservicio)
+
+  Control de acceso basado
+  en permisos por endpoint
+end note
+
+note right of TransactionManager
+  **Garantías ACID:**
+  • BEGIN/COMMIT/ROLLBACK
+  • Bloqueo a nivel de fila
+    (FOR UPDATE)
+  • Operaciones atómicas
+  • Rollback automático en errores
+  • Prevención de condiciones
+    de carrera
+end note
+
+note bottom of PostgresDB
+  **Características de BD:**
+  • PostgreSQL 12+
+  • Restricciones de clave foránea
+  • Restricciones CHECK
+  • Restricciones UNIQUE
+  • Eliminaciones en cascada
+  • Timestamps automáticos
+  • Integridad referencial
+end note
+
+note right of OrderController
+  **Operaciones Clave:**
+  • Crear orden (transaccional)
+  • Validar disponibilidad de stock
+  • Decrementar inventario atómicamente
+  • Máquina de estados:
+    **pendiente** → **en_preparacion**
+    → **listo** → **entregado**
+  • Prevención de overselling
+end note
+
+note right of PaymentController
+  **Procesamiento de Pagos:**
+  • Prevenir pagos duplicados
+    (UNIQUE constraint)
+  • Validar propiedad de orden
+  • Bloquear orden durante pago
+  • Registrar método de pago
+  • Validación de monto
+end note
+
+note left of InventoryController
+  **Gestión de Inventario:**
+  • Listado de stock actual
+  • Actualización manual (gerente)
+  • Alertas de stock bajo
+  • Threshold configurable
+  • Actualización de timestamp
+end note
+
+note left of ReportController
+  **Reportes y Analítica:**
+  • Ventas por período
+    (diario/semanal/mensual)
+  • Desglose por método de pago
+  • Top 5 productos vendidos
+  • Solo accesible por gerente
+end note
+
+legend right
+  **Tipos de Componentes:**
+  |<#LightYellow> Componente | Módulo de aplicación |
+  |<#LightBlue> Interfaz | Contrato de API |
+  |<#LightGreen> Base de Datos | Almacenamiento de datos |
+  |<#LightGray> Paquete | Agrupación lógica |
+
+  **Tipos de Dependencias:**
+  ──> Dependencia requerida
+  ··> Dependencia de configuración
+
+  **Bibliotecas Externas:**
+  • express ^5.1.0 (Framework web)
+  • pg ^8.12.0 (Cliente PostgreSQL)
+  • jsonwebtoken ^9.0.2 (Autenticación JWT)
+  • bcryptjs ^2.4.3 (Hash de contraseñas)
+  • date-fns ^3.6.0 (Utilidades de fechas)
+  • cors ^2.8.5 (Cross-Origin Resource Sharing)
+  • dotenv ^16.4.5 (Variables de entorno)
+
+  **Arquitectura:**
+  • MVC simplificado sin ORM
+  • Consultas SQL directas parametrizadas
+  • Middleware pipeline para procesamiento
+  • Separación de responsabilidades por capas
+endlegend
+
+@enduml

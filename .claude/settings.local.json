@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(java -jar plantuml.jar:*)",
+      "Bash(dir:*)",
+      "Bash(cat:*)",
+      "Bash(file=\"/c/Users/lzzow/OneDrive/Documentos/Projects/urbe/don_pastel_back/src/app.js\")",
+      "Bash(test:*)",
+      "Bash(find:*)",
+      "Bash(findstr:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

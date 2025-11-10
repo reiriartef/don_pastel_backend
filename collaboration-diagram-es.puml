@@ -1,0 +1,96 @@
+@startuml Sistema Don Pastel - Diagrama de Colaboración
+
+title Sistema Don Pastel - Diagrama de Colaboración (Diagrama de Comunicación)\nFlujo de Creación de Orden
+
+' Definir objetos
+object ":Cliente" as client
+object ":API Gateway\n/api/orders" as api
+object ":Middleware\nAuth" as auth
+object ":Controlador\nOrder" as controller
+object ":Pool de\nConexiones BD" as dbPool
+object ":Gestor de\nTransacciones" as txManager
+object ":Tabla\nInventory" as inventory
+object ":Tabla\nOrders" as orders
+object ":Tabla\nOrder_Items" as orderItems
+object ":Tabla\nProducts" as products
+
+' Conexiones con mensajes numerados
+client -down- api : 1: POST /api/orders\n{items: [{product_id, quantity}]}\nAuthorization: Bearer <token>
+
+api -down- auth : 2: authRequired()
+
+auth -down- api : 3: req.user = {id, role}
+
+api -down- controller : 4: createOrder(req, res, next)
+
+controller -down- dbPool : 5: getClient()
+
+dbPool -down- controller : 6: cliente dedicado
+
+controller -down- txManager : 7: BEGIN TRANSACTION
+
+txManager -down- inventory : 8: SELECT * FROM inventory\nWHERE product_id IN (...)\nFOR UPDATE
+
+inventory -down- txManager : 9: [{product_id, stock_level}]\n(filas bloqueadas)
+
+txManager -down- controller : 10: datos de inventario
+
+controller -down- controller : 11: validateStockAvailability()
+
+controller -down- products : 12: SELECT price FROM products\nWHERE product_id IN (...)
+
+products -down- controller : 13: precios de productos
+
+controller -down- controller : 14: calculateTotalAmount()
+
+controller -down- orders : 15: INSERT INTO orders\n(user_id, status, total_amount)\nRETURNING order_id
+
+orders -down- controller : 16: order_id
+
+controller -down- orderItems : 17: INSERT INTO order_items\n(order_id, product_id,\nquantity, unit_price)
+
+orderItems -down- controller : 18: order_item_id (por cada uno)
+
+controller -down- inventory : 19: UPDATE inventory\nSET stock_level = stock_level - ?\nWHERE product_id = ?
+
+inventory -down- controller : 20: filas actualizadas
+
+controller -down- txManager : 21: COMMIT
+
+txManager -down- inventory : 22: liberar bloqueos
+
+txManager -down- orders : 23: confirmar cambios
+
+txManager -down- orderItems : 24: confirmar cambios
+
+txManager -down- controller : 25: transacción confirmada
+
+controller -down- dbPool : 26: SELECT order with items
+
+dbPool -down- controller : 27: {order_id, status,\ntotal_amount, items}
+
+controller -down- api : 28: res.status(201).json(order)
+
+api -down- client : 29: 201 Created\n{order_id, status,\ntotal_amount, order_date, items}
+
+note right of controller
+  La transacción garantiza:
+  - Atomicidad (todo o nada)
+  - Consistencia (stock siempre válido)
+  - Aislamiento (bloqueos previenen conflictos)
+  - Durabilidad (cambios confirmados persisten)
+end note
+
+note right of inventory
+  La cláusula FOR UPDATE bloquea filas
+  previniendo modificaciones concurrentes
+  durante la transacción
+end note
+
+note left of client
+  Roles de cliente: cliente, cajero, gerente
+  Cada uno puede crear órdenes para sí mismo
+  Cajero y Gerente pueden crear para cualquiera
+end note
+
+@enduml
